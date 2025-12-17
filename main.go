@@ -13,6 +13,7 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 	"github.com/nfnt/resize"
 	"github.com/vcaesar/screenshot"
@@ -41,6 +42,25 @@ func main() {
 
 	apps = getTranscribApps()
 
+	activateFocused := func(w fyne.Window) {
+		if w == nil {
+			return
+		}
+		focused := w.Canvas().Focused()
+		switch v := focused.(type) {
+		case *EnterButton:
+			if v.OnTapped != nil {
+				v.OnTapped()
+			}
+		case *widget.Button:
+			if v.OnTapped != nil {
+				v.OnTapped()
+			}
+		case *widget.Check:
+			v.SetChecked(!v.Checked)
+		}
+	}
+
 	// Filter apps based on selected
 	if len(settings.SelectedApps) > 0 {
 		var filtered []AppInfo
@@ -56,13 +76,14 @@ func main() {
 	screenWidth := bounds.Dx()
 	maxWidth := int(float64(screenWidth) * 0.8)
 	iconSize := 128
-	windowWidth := len(apps) * iconSize
+	buttonCount := len(apps) + 1 // apps + settings button
+	windowWidth := buttonCount * iconSize
 	if windowWidth > maxWidth {
-		iconSize = maxWidth / len(apps)
+		iconSize = maxWidth / buttonCount
 		if iconSize < 64 {
 			iconSize = 64
 		}
-		windowWidth = len(apps) * iconSize
+		windowWidth = buttonCount * iconSize
 	}
 
 	fyneApp = app.New()
@@ -86,7 +107,7 @@ func main() {
 	var buttons []fyne.CanvasObject
 	for _, app := range apps {
 		app := app // capture
-		var button *widget.Button
+		var button *EnterButton
 		var icon fyne.Resource
 		if app.IconPath != "" {
 			tempPng := filepath.Join(os.TempDir(), app.BundleID+".png")
@@ -107,7 +128,7 @@ func main() {
 			}
 		}
 		if icon != nil {
-			button = widget.NewButtonWithIcon("", icon, func() {
+			button = NewEnterButtonWithIcon("", icon, func() {
 				exec.Command("open", app.Path).Run()
 				for _, other := range apps {
 					if other.BundleID != app.BundleID {
@@ -117,7 +138,7 @@ func main() {
 				window.Hide()
 			})
 		} else {
-			button = widget.NewButton(app.Name, func() {
+			button = NewEnterButton(app.Name, func() {
 				exec.Command("open", app.Path).Run()
 				for _, other := range apps {
 					if other.BundleID != app.BundleID {
@@ -136,24 +157,28 @@ func main() {
 		}
 		focused := window.Canvas().Focused()
 		currentIndex := -1
-		if btn, ok := focused.(*widget.Button); ok {
-			for i, b := range buttons {
-				if b.(*widget.Button) == btn {
-					currentIndex = i
-					break
-				}
+		for i, b := range buttons {
+			f, ok := b.(fyne.Focusable)
+			if ok && f == focused {
+				currentIndex = i
+				break
 			}
 		}
 		if currentIndex == -1 {
 			currentIndex = 0
 		}
 		newIndex := (currentIndex + delta + len(buttons)) % len(buttons)
-		window.Canvas().Focus(buttons[newIndex].(*widget.Button))
+		window.Canvas().Focus(buttons[newIndex].(fyne.Focusable))
 	}
 
-	window.SetContent(container.NewCenter(container.NewHBox(buttons...)))
+	var openSettings func()
+	settingsButton := NewIconButton(theme.SettingsIcon(), fyne.NewSquareSize(float32(iconSize)), func() {
+		if openSettings != nil {
+			openSettings()
+		}
+	})
 
-	openSettings := func() {
+	openSettings = func() {
 		settingsWindow := fyneApp.NewWindow("Settings")
 		allApps := getTranscribApps()
 		var checkboxes []*widget.Check
@@ -179,15 +204,20 @@ func main() {
 		content.Add(saveBtn)
 		settingsWindow.SetContent(content)
 		settingsWindow.Resize(fyne.NewSize(300, 400))
+		settingsWindow.Canvas().SetOnTypedKey(func(ev *fyne.KeyEvent) {
+			if ev.Name == fyne.KeyReturn || ev.Name == fyne.KeyEnter {
+				activateFocused(settingsWindow)
+			}
+		})
 		settingsWindow.Show()
 	}
+
+	row := append(buttons, settingsButton)
+	window.SetContent(container.NewCenter(container.NewHBox(row...)))
+
 	window.Canvas().SetOnTypedKey(func(ev *fyne.KeyEvent) {
 		if ev.Name == fyne.KeyReturn || ev.Name == fyne.KeyEnter {
-			if focused := window.Canvas().Focused(); focused != nil {
-				if btn, ok := focused.(*widget.Button); ok {
-					btn.OnTapped()
-				}
-			}
+			activateFocused(window)
 		} else if ev.Name == fyne.KeyLeft {
 			moveFocus(-1)
 		} else if ev.Name == fyne.KeyRight {
@@ -201,7 +231,7 @@ func main() {
 	window.SetFixedSize(true)
 	window.CenterOnScreen()
 	if len(buttons) > 0 {
-		window.Canvas().Focus(buttons[0].(*widget.Button))
+		window.Canvas().Focus(buttons[0].(fyne.Focusable))
 	}
 	window.Show()
 
