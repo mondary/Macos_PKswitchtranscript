@@ -23,6 +23,15 @@ var window fyne.Window
 var settings *Settings
 var apps []AppInfo
 
+func contains(slice []string, item string) bool {
+	for _, s := range slice {
+		if s == item {
+			return true
+		}
+	}
+	return false
+}
+
 func main() {
 	var err error
 	settings, err = loadSettings()
@@ -31,6 +40,17 @@ func main() {
 	}
 
 	apps = getTranscribApps()
+
+	// Filter apps based on selected
+	if len(settings.SelectedApps) > 0 {
+		var filtered []AppInfo
+		for _, app := range apps {
+			if contains(settings.SelectedApps, app.BundleID) {
+				filtered = append(filtered, app)
+			}
+		}
+		apps = filtered
+	}
 
 	bounds := screenshot.GetDisplayBounds(0)
 	screenWidth := bounds.Dx()
@@ -56,8 +76,12 @@ func main() {
 	var buf bytes.Buffer
 	png.Encode(&buf, img)
 	appIcon := fyne.NewStaticResource("appicon", buf.Bytes())
+
 	window = fyneApp.NewWindow("App Switcher")
 	window.SetIcon(appIcon)
+	window.SetOnClosed(func() {
+		window.Hide()
+	})
 
 	var buttons []fyne.CanvasObject
 	for _, app := range apps {
@@ -90,7 +114,7 @@ func main() {
 						exec.Command("osascript", "-e", "tell application \""+other.Name+"\" to quit").Run()
 					}
 				}
-				window.Close()
+				window.Hide()
 			})
 		} else {
 			button = widget.NewButton(app.Name, func() {
@@ -100,7 +124,7 @@ func main() {
 						exec.Command("osascript", "-e", "tell application \""+other.Name+"\" to quit").Run()
 					}
 				}
-				window.Close()
+				window.Hide()
 			})
 		}
 		buttons = append(buttons, button)
@@ -127,7 +151,36 @@ func main() {
 		window.Canvas().Focus(buttons[newIndex].(*widget.Button))
 	}
 
-	window.SetContent(container.NewHBox(buttons...))
+	window.SetContent(container.NewCenter(container.NewHBox(buttons...)))
+
+	openSettings := func() {
+		settingsWindow := fyneApp.NewWindow("Settings")
+		allApps := getTranscribApps()
+		var checkboxes []*widget.Check
+		for _, app := range allApps {
+			cb := widget.NewCheck(app.Name, nil)
+			cb.SetChecked(contains(settings.SelectedApps, app.BundleID))
+			checkboxes = append(checkboxes, cb)
+		}
+		saveBtn := widget.NewButton("Save", func() {
+			settings.SelectedApps = nil
+			for i, cb := range checkboxes {
+				if cb.Checked {
+					settings.SelectedApps = append(settings.SelectedApps, allApps[i].BundleID)
+				}
+			}
+			saveSettings(settings)
+			settingsWindow.Close()
+		})
+		content := container.NewVBox()
+		for _, cb := range checkboxes {
+			content.Add(cb)
+		}
+		content.Add(saveBtn)
+		settingsWindow.SetContent(content)
+		settingsWindow.Resize(fyne.NewSize(300, 400))
+		settingsWindow.Show()
+	}
 	window.Canvas().SetOnTypedKey(func(ev *fyne.KeyEvent) {
 		if ev.Name == fyne.KeyReturn || ev.Name == fyne.KeyEnter {
 			if focused := window.Canvas().Focused(); focused != nil {
@@ -139,6 +192,8 @@ func main() {
 			moveFocus(-1)
 		} else if ev.Name == fyne.KeyRight {
 			moveFocus(1)
+		} else if ev.Name == fyne.KeyS {
+			openSettings()
 		}
 	})
 
